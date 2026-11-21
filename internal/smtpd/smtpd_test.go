@@ -330,7 +330,10 @@ func TestSubmission(t *testing.T) {
 	wantCode(t, transact(e.sub, login, "alice@example.test", []string{"bob@example.test"},
 		message("bob@example.test", "dave@remote.test", "Spoof", "")), 553, "5.7.1")
 
-	raw := "From: Alice <alice@example.test>\r\nTo: bob@example.test\r\nBcc: dave@remote.test\r\nSubject: Plan\r\n\r\nSee you.\r\n"
+	raw := "From: Alice <alice@example.test>\r\nTo: bob@example.test\r\nBcc: dave@remote.test\r\n" +
+		"Authentication-Results: mx.example.test; spf=pass\r\n" +
+		"authentication-results: elsewhere.test; dkim=pass\r\n" +
+		"Subject: Plan\r\n\r\nSee you.\r\n"
 	err := transact(e.sub, sasl.NewPlainClient("", "alice@example.test", "correct horse"), "alice@example.test",
 		[]string{"bob@example.test", "dave@remote.test"}, []byte(raw))
 	if err != nil {
@@ -345,7 +348,8 @@ func TestSubmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	queued := string(entry.Data)
-	if strings.Contains(queued, "Bcc:") || !strings.Contains(queued, "\r\nMessage-ID: <") || !strings.Contains(queued, "\r\nDate: ") {
+	if strings.Contains(queued, "Bcc:") || countHeader(entry.Data, "Authentication-Results") != 0 ||
+		!strings.Contains(queued, "\r\nMessage-ID: <") || !strings.Contains(queued, "\r\nDate: ") {
 		t.Fatalf("queued message not fixed up:\n%s", queued)
 	}
 	if !strings.HasPrefix(queued, "Received: from client.sender.test\r\n\tby mx.example.test (TitoMail) with ESMTPA id ") {
