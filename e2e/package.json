@@ -1,0 +1,13 @@
+{
+  "name": "titomail-e2e",
+  "private": true,
+  "description": "End-to-end tests for the TitoMail server and webmail",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^26.6.6"
+  }
+}
