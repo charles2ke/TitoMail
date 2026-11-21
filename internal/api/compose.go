@@ -321,8 +321,11 @@ func (a *API) send(w http.ResponseWriter, r *http.Request, c *reqCtx) error {
 		if d > maxScheduleAt {
 			return badRequest("messages can be scheduled at most a year ahead")
 		}
-		if d > delay {
-			delay, scheduled = d, true
+		if d > 0 {
+			scheduled = true
+			if d > delay {
+				delay = d
+			}
 		}
 	}
 	draftID := int64(0)
@@ -332,7 +335,7 @@ func (a *API) send(w http.ResponseWriter, r *http.Request, c *reqCtx) error {
 		}
 	}
 	res, err := a.d.Send(ctx, delivery.SendRequest{User: c.user, Message: o, DraftID: draftID,
-		ReplyToID: cs.InReplyToID, ForwardOfID: cs.ForwardOfID, Delay: delay})
+		ReplyToID: cs.InReplyToID, ForwardOfID: cs.ForwardOfID, Delay: delay, Scheduled: scheduled})
 	if err != nil {
 		return err
 	}

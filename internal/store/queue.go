@@ -27,6 +27,7 @@ type QueueEntry struct {
 	MessageID  string       `json:"message_id"`
 	Subject    string       `json:"subject"`
 	SentCopyID int64        `json:"sent_copy_id"`
+	Scheduled  bool         `json:"scheduled"`
 	Size       int64        `json:"size"`
 	Data       []byte       `json:"-"`
 	CreatedAt  time.Time    `json:"created_at"`
@@ -64,8 +65,8 @@ func (s *Store) Enqueue(ctx context.Context, e *QueueEntry, rcpts []string, notB
 		if e.UserID > 0 {
 			userID = e.UserID
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO queue(user_id, mail_from, message_id, subject, sent_copy_id, data, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`, userID, e.MailFrom, e.MessageID, e.Subject, e.SentCopyID, e.Data, nowUnix())
+		res, err := tx.ExecContext(ctx, `INSERT INTO queue(user_id, mail_from, message_id, subject, sent_copy_id, data, created_at, scheduled)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, userID, e.MailFrom, e.MessageID, e.Subject, e.SentCopyID, e.Data, nowUnix(), e.Scheduled)
 		if err != nil {
 			return err
 		}
@@ -107,8 +108,8 @@ func getQueueEntryTx(ctx context.Context, q queryer, id int64, withData bool) (*
 	if withData {
 		dataCol = "data"
 	}
-	err := q.QueryRowContext(ctx, `SELECT id, user_id, mail_from, message_id, subject, sent_copy_id, length(data), `+dataCol+`, created_at
-		FROM queue WHERE id = ?`, id).Scan(&e.ID, &userID, &e.MailFrom, &e.MessageID, &e.Subject, &e.SentCopyID, &e.Size, &e.Data, &created)
+	err := q.QueryRowContext(ctx, `SELECT id, user_id, mail_from, message_id, subject, sent_copy_id, length(data), `+dataCol+`, created_at, scheduled
+		FROM queue WHERE id = ?`, id).Scan(&e.ID, &userID, &e.MailFrom, &e.MessageID, &e.Subject, &e.SentCopyID, &e.Size, &e.Data, &created, &e.Scheduled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {

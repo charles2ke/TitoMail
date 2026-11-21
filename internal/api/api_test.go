@@ -481,6 +481,21 @@ func TestDraftsUndoAndSchedule(t *testing.T) {
 		t.Fatalf("sent copy left after undo: %+v", sent)
 	}
 
+	// A future schedule within the undo window remains scheduled, while the
+	// undo window still sets the earliest delivery time.
+	soon := time.Now().Add(time.Second)
+	restored.ScheduleAt = &soon
+	alice.must("POST", "/api/send", restored, &res)
+	if !res.Scheduled || res.SendAt.Before(soon) {
+		t.Fatalf("short schedule: %+v", res)
+	}
+	var shortOutbox []*store.QueueEntry
+	alice.must("GET", "/api/outbox", nil, &shortOutbox)
+	if len(shortOutbox) != 1 || !shortOutbox[0].Scheduled {
+		t.Fatalf("short scheduled outbox: %+v", shortOutbox)
+	}
+	alice.must("POST", fmt.Sprintf("/api/outbox/%d/cancel", res.QueueID), nil, &undone)
+
 	// Scheduled sending.
 	at := time.Now().Add(2 * time.Hour)
 	restored.ScheduleAt = &at
@@ -491,7 +506,7 @@ func TestDraftsUndoAndSchedule(t *testing.T) {
 	}
 	var outbox []*store.QueueEntry
 	alice.must("GET", "/api/outbox", nil, &outbox)
-	if len(outbox) != 1 || outbox[0].Subject != "Plans" {
+	if len(outbox) != 1 || outbox[0].Subject != "Plans" || !outbox[0].Scheduled {
 		t.Fatalf("outbox: %+v", outbox)
 	}
 	tooFar := time.Now().Add(400 * 24 * time.Hour)

@@ -23,7 +23,8 @@ type SendRequest struct {
 	// ForwardOfID is the message being forwarded; it gets $Forwarded.
 	ForwardOfID int64
 	// Delay holds the message in the queue so the user can undo the send.
-	Delay time.Duration
+	Delay     time.Duration
+	Scheduled bool
 }
 
 // SendResult describes a queued message.
@@ -84,7 +85,7 @@ func (d *Deliverer) Send(ctx context.Context, req SendRequest) (*SendResult, err
 	sendAt := d.now().Add(req.Delay)
 	qid, err := d.st.Enqueue(ctx, &store.QueueEntry{
 		UserID: u.ID, MailFrom: email.NormalizeAddress(o.From.Address), MessageID: o.MessageID,
-		Subject: o.Subject, SentCopyID: sent.ID, Data: wireRaw,
+		Subject: o.Subject, SentCopyID: sent.ID, Data: wireRaw, Scheduled: req.Scheduled,
 	}, rcpts, sendAt)
 	if err != nil {
 		_, _ = d.st.DeleteByID(ctx, u.ID, []int64{sent.ID})

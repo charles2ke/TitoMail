@@ -227,7 +227,18 @@ CREATE INDEX queue_rcpts_queue ON queue_rcpts(queue_id);
 CREATE INDEX queue_rcpts_due ON queue_rcpts(status, next_attempt_at);
 `
 
-var migrations = []string{schemaV1}
+const schemaV2 = `
+ALTER TABLE queue ADD COLUMN scheduled INTEGER NOT NULL DEFAULT 0;
+-- Older queues did not record this decision. Delays longer than the maximum
+-- undo window identify scheduled web sends that have not yet been claimed.
+UPDATE queue SET scheduled = 1
+WHERE user_id IS NOT NULL AND sent_copy_id > 0
+	AND EXISTS (SELECT 1 FROM queue_rcpts r WHERE r.queue_id = queue.id AND r.next_attempt_at - queue.created_at > 30)
+	AND NOT EXISTS (SELECT 1 FROM queue_rcpts r WHERE r.queue_id = queue.id
+		AND (r.status != 'pending' OR r.attempts != 0 OR r.last_attempt_at != 0));
+`
+
+var migrations = []string{schemaV1, schemaV2}
 
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {

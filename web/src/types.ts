@@ -235,6 +235,7 @@ export interface QueueEntry {
   message_id: string;
   subject: string;
   sent_copy_id: number;
+  scheduled: boolean;
   size: number;
   created_at: string;
   recipients: QueueRcpt[] | null;
