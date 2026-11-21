@@ -1,0 +1,40 @@
+# Example production deployment with automatic Let's Encrypt certificates.
+#
+# 1. Replace mail.example.com and postmaster@example.com below.
+# 2. Point DNS at this host (see "DNS records" in README.md) and open the
+#    ports listed under "ports".
+# 3. docker compose up -d, then open the setup link from
+#    "docker compose logs titomail" (or set the TITOMAIL_ADMIN_* variables).
+services:
+  titomail:
+    build: .
+    image: titomail
+    restart: unless-stopped
+    environment:
+      TITOMAIL_HOSTNAME: mail.example.com
+      TITOMAIL_ACME: "true"
+      TITOMAIL_ACME_EMAIL: postmaster@example.com
+      TITOMAIL_HTTPS_ADDR: ":443"
+      TITOMAIL_SUBMISSIONS_ADDR: ":465"
+      TITOMAIL_IMAPS_ADDR: ":993"
+      # Create the first administrator instead of using the setup link:
+      # TITOMAIL_ADMIN_EMAIL: you@example.com
+      # TITOMAIL_ADMIN_PASSWORD: a long password
+      #
+      # If your provider blocks outbound port 25, send through a smarthost:
+      # TITOMAIL_RELAY_HOST: smtp.relay.example
+      # TITOMAIL_RELAY_USERNAME: user
+      # TITOMAIL_RELAY_PASSWORD: secret
+    ports:
+      - "25:25"     # incoming mail (MX)
+      - "80:80"     # HTTP: redirects to HTTPS, ACME challenges, autoconfig
+      - "143:143"   # IMAP with STARTTLS
+      - "443:443"   # webmail
+      - "465:465"   # SMTP submission over TLS
+      - "587:587"   # SMTP submission with STARTTLS
+      - "993:993"   # IMAP over TLS
+    volumes:
+      - titomail-data:/data
+
+volumes:
+  titomail-data:
