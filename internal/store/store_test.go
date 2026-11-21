@@ -488,6 +488,67 @@ func TestQueueLifecycle(t *testing.T) {
 	}
 }
 
+func TestScheduledQueueMigration(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u := newTestUser(t, s, "me@example.com")
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE queue DROP COLUMN scheduled;
+		UPDATE meta SET value = '1' WHERE key = 'schema_version'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		id, delay, lastAttempt, sentCopy int64
+	}{
+		{1, 120, 0, 1},
+		{2, 5, 0, 1},
+		{3, 120, 1, 1},
+		{4, 120, 0, 0},
+	} {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO queue(id, user_id, mail_from, sent_copy_id, data, created_at)
+			VALUES (?, ?, '', ?, x'00', 1000)`, tc.id, u.ID, tc.sentCopy); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO queue_rcpts(queue_id, rcpt, domain, next_attempt_at, last_attempt_at)
+			VALUES (?, '', '', ?, ?)`, tc.id, 1000+tc.delay, tc.lastAttempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for id := int64(1); id <= 4; id++ {
+		e, err := s.GetQueueEntry(ctx, id)
+		if err != nil || e.Scheduled != (id == 1) {
+			t.Fatalf("entry %d: %+v, %v", id, e, err)
+		}
+	}
+}
+
+func TestScheduledQueueMarker(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u := newTestUser(t, s, "me@example.com")
+	now := time.Now()
+	e := &QueueEntry{UserID: u.ID, Data: []byte("data"), Scheduled: true}
+	if _, err := s.Enqueue(ctx, e, []string{"a@x.org", "b@y.org"}, now.Add(20*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListQueue(ctx, u.ID)
+	if err != nil || len(list) != 1 || !list[0].Scheduled {
+		t.Fatalf("scheduled list: %+v, %v", list, err)
+	}
+	if _, err := s.ClaimDue(ctx, now.Add(20*time.Second), time.Minute, 1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetQueueEntry(ctx, e.ID)
+	if err != nil || !got.Scheduled || got.Rcpts[0].LastAttemptAt.IsZero() || !got.Rcpts[1].LastAttemptAt.IsZero() {
+		t.Fatalf("partially claimed: %+v, %v", got, err)
+	}
+	if _, err := s.CancelQueued(ctx, u.ID, e.ID); !errors.Is(err, ErrTooLate) {
+		t.Fatalf("cancel partially claimed = %v", err)
+	}
+}
+
 func TestVacationAndSenderPrefs(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

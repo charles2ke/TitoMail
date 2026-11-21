@@ -187,8 +187,10 @@ export function toLocalInput(d: Date): string {
 
 /** A queued message the user scheduled for later (not one inside its short undo-send window). */
 export function isScheduled(e: QueueEntry): boolean {
-  const soon = Date.now() + 60_000;
-  return (e.recipients ?? []).some((r) => r.status === "pending" && r.attempts === 0 && new Date(r.next_attempt_at).getTime() > soon);
+  const recipients = e.recipients ?? [];
+  return e.scheduled && recipients.length > 0 && recipients.every(
+    (r) => r.status === "pending" && r.attempts === 0 && r.last_attempt_at === "0001-01-01T00:00:00Z",
+  );
 }
 
 /** A queued message whose delivery failed temporarily and will be retried. */
