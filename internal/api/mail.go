@@ -98,7 +98,7 @@ func (a *API) deleteMailbox(w http.ResponseWriter, r *http.Request, c *reqCtx) e
 	}
 	var tree []*store.Mailbox
 	for _, sub := range all {
-		if sub.ID == mb.ID || hasPrefixFold(sub.Name, mb.Name+"/") {
+		if sub.ID == mb.ID || strings.HasPrefix(sub.Name, mb.Name+"/") {
 			if sub.SpecialUse != "" {
 				return badRequest("the folder contains a system folder")
 			}
@@ -130,10 +130,6 @@ func (a *API) deleteMailbox(w http.ResponseWriter, r *http.Request, c *reqCtx) e
 		return err
 	}
 	return ok(w, map[string]bool{"ok": true})
-}
-
-func hasPrefixFold(s, prefix string) bool {
-	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
 func (a *API) emptyMailbox(w http.ResponseWriter, r *http.Request, c *reqCtx) error {

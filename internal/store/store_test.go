@@ -348,6 +348,49 @@ func TestMailboxRenameAndDelete(t *testing.T) {
 	}
 }
 
+func TestSubfoldersMatchExactly(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u := newTestUser(t, s, "me@example.com")
+	for _, name := range []string{"Work", "work/Reports", "Données/2024", "日本語/子"} {
+		if _, err := s.CreateMailbox(ctx, u.ID, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	byName := func(name string) *Mailbox {
+		t.Helper()
+		mb, err := s.MailboxByName(ctx, u.ID, name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return mb
+	}
+	// Folder names are case-sensitive: "work/Reports" is not inside "Work".
+	if has, err := s.HasChildren(ctx, u.ID, "Work"); err != nil || has {
+		t.Errorf("HasChildren(Work) = %v, %v; want false", has, err)
+	}
+	if has, err := s.HasChildren(ctx, u.ID, "work"); err != nil || !has {
+		t.Errorf("HasChildren(work) = %v, %v; want true", has, err)
+	}
+	for from, to := range map[string]string{"Work": "Projects", "Données": "Data", "日本語": "Japanese"} {
+		if err := s.RenameMailbox(ctx, u.ID, byName(from).ID, to); err != nil {
+			t.Fatalf("rename %s: %v", from, err)
+		}
+	}
+	for _, name := range []string{"Projects", "work/Reports", "Data/2024", "Japanese/子"} {
+		byName(name)
+	}
+	if err := s.DeleteMailbox(ctx, u.ID, byName("Projects").ID, false); err != nil {
+		t.Fatalf("delete Projects: %v", err)
+	}
+	if err := s.DeleteMailbox(ctx, u.ID, byName("work").ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MailboxByName(ctx, u.ID, "work/Reports"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("work/Reports survived deleting work: %v", err)
+	}
+}
+
 func TestQueueLifecycle(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

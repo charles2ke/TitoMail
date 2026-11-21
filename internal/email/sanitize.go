@@ -69,7 +69,6 @@ var (
 	cssURL       = regexp.MustCompile(`(?i)url\(\s*(['"]?)(.*?)(['"]?)\s*\)`)
 	cssImport    = regexp.MustCompile(`(?i)@import[^;]*;?`)
 	cssDangerous = regexp.MustCompile(`(?i)(expression\s*\(|javascript:|vbscript:|-moz-binding|behavior\s*:)`)
-	cssStyleEnd  = regexp.MustCompile(`(?i)</\s*style`)
 	cssPosition  = regexp.MustCompile(`(?i)position\s*:\s*(fixed|absolute)`)
 )
 
@@ -164,8 +163,15 @@ func sanitizeCSS(css string, opts SanitizeOptions) (string, bool) {
 	if strings.TrimSpace(css) == "" {
 		return "", false
 	}
-	css = cssStyleEnd.ReplaceAllString(css, "")
-	css = cssImport.ReplaceAllString(css, "")
+	// Removing text can join what surrounds it into a new match, as in
+	// "@@import;import", so repeat until nothing changes.
+	for {
+		cleaned := cssImport.ReplaceAllString(css, "")
+		if cleaned == css {
+			break
+		}
+		css = cleaned
+	}
 	css = cssDangerous.ReplaceAllString(css, "blocked(")
 	blocked := false
 	css = cssURL.ReplaceAllStringFunc(css, func(m string) string {
@@ -179,7 +185,9 @@ func sanitizeCSS(css string, opts SanitizeOptions) (string, bool) {
 		}
 		return `url("` + strings.ReplaceAll(u, `"`, `%22`) + `")`
 	})
-	return css, blocked
+	// The result is written into a <style> element, which ends at the first
+	// "</style". CSS never needs a raw "<", so escape every one.
+	return strings.ReplaceAll(css, "<", `\3c `), blocked
 }
 
 // rewriteURL decides what to do with a resource URL. It returns the URL to

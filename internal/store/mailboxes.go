@@ -244,19 +244,41 @@ func (s *Store) RenameMailbox(ctx context.Context, userID, id int64, newName str
 			return invalid("a folder cannot be moved into itself")
 		}
 		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mailboxes WHERE user_id = ? AND (name = ? OR name LIKE ? ESCAPE '\')`,
-			userID, newName, escapeLike(newName)+"/%").Scan(&n); err != nil {
+		lo, hi := childRange(newName)
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mailboxes WHERE user_id = ? AND (name = ? OR (name > ? AND name < ?))`,
+			userID, newName, lo, hi).Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {
 			return ErrConflict
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE mailboxes SET name = ? || substr(name, ?) WHERE user_id = ? AND name LIKE ? ESCAPE '\'`,
-			newName, len(mb.Name)+1, userID, escapeLike(mb.Name)+"/%"); err != nil {
+		lo, hi = childRange(mb.Name)
+		rows, err := tx.QueryContext(ctx, `SELECT id, name FROM mailboxes WHERE user_id = ? AND name > ? AND name < ?`, userID, lo, hi)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE mailboxes SET name = ? WHERE id = ?`, newName, id); err != nil {
+		type rename struct {
+			id   int64
+			name string
+		}
+		renames := []rename{{id, newName}}
+		for rows.Next() {
+			var r rename
+			if err := rows.Scan(&r.id, &r.name); err != nil {
+				rows.Close()
+				return err
+			}
+			r.name = newName + r.name[len(mb.Name):]
+			renames = append(renames, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
 			return err
+		}
+		for _, r := range renames {
+			if _, err := tx.ExecContext(ctx, `UPDATE mailboxes SET name = ? WHERE id = ?`, r.name, r.id); err != nil {
+				return err
+			}
 		}
 		parts := strings.Split(newName, "/")
 		for i := 1; i < len(parts); i++ {
@@ -275,11 +297,20 @@ func (s *Store) RenameMailbox(ctx context.Context, userID, id int64, newName str
 	})
 }
 
+// childRange returns bounds that select the sub-folders of parent with
+// "name > lo AND name < hi". Under the column's binary collation, exactly the
+// names that start with parent+"/" sort between parent+"/" and parent+"0" ('0'
+// follows '/'). Unlike LIKE, this is case-sensitive, as folder names are.
+func childRange(parent string) (lo, hi string) {
+	return parent + "/", parent + "0"
+}
+
 // HasChildren reports whether the mailbox has sub-folders.
 func (s *Store) HasChildren(ctx context.Context, userID int64, name string) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mailboxes WHERE user_id = ? AND name LIKE ? ESCAPE '\'`,
-		userID, escapeLike(name)+"/%").Scan(&n)
+	lo, hi := childRange(name)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mailboxes WHERE user_id = ? AND name > ? AND name < ?`,
+		userID, lo, hi).Scan(&n)
 	return n > 0, err
 }
 
@@ -295,8 +326,9 @@ func (s *Store) DeleteMailbox(ctx context.Context, userID, id int64, recursive b
 			return invalid("system folders cannot be deleted")
 		}
 		ids := []int64{id}
-		children, err := queryInt64s(ctx, tx, `SELECT id FROM mailboxes WHERE user_id = ? AND name LIKE ? ESCAPE '\'`,
-			userID, escapeLike(mb.Name)+"/%")
+		lo, hi := childRange(mb.Name)
+		children, err := queryInt64s(ctx, tx, `SELECT id FROM mailboxes WHERE user_id = ? AND name > ? AND name < ?`,
+			userID, lo, hi)
 		if err != nil {
 			return err
 		}

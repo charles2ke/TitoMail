@@ -3,6 +3,9 @@ package email
 import (
 	"strings"
 	"testing"
+
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 const sampleMultipart = "From: \"Alice Example\" <alice@example.org>\r\n" +
@@ -108,6 +111,23 @@ func TestRenderHTMLBlocksDangerousContent(t *testing.T) {
 	allowed := RenderHTML(m.HTML, SanitizeOptions{AllowRemote: true})
 	if !strings.Contains(allowed.Document, "http://tracker.example/pixel.gif") {
 		t.Errorf("remote image missing when allowed:\n%s", allowed.Document)
+	}
+}
+
+func TestRenderHTMLKeepsStylesContained(t *testing.T) {
+	for _, css := range []string{
+		`a{}</sty</stylele><link rel=preconnect href=https://x.example>`,
+		`a{}<@import;/style><link rel=dns-prefetch href=https://x.example>`,
+		`@@import;import url(https://x.example/a.css);a{}`,
+	} {
+		doc := RenderHTML("<style>"+css+"</style><p>Hello</p>", SanitizeOptions{AllowRemote: true}).Document
+		parsed, err := html.Parse(strings.NewReader(doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if findElement(parsed, atom.Link) != nil || strings.Contains(doc, "@import") {
+			t.Errorf("style %q escaped sanitizing:\n%s", css, doc)
+		}
 	}
 }
 

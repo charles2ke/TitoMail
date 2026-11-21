@@ -7,10 +7,11 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"strings"
+	"runtime"
 	"sync"
 	"time"
 
+	"github.com/charles2ke/TitoMail/internal/email"
 	"github.com/charles2ke/TitoMail/internal/store"
 )
 
@@ -18,7 +19,9 @@ import (
 var ErrThrottled = errors.New("too many failed login attempts, try again later")
 
 // Limiter blocks a key after max failures within window. The block lasts
-// until the window that started with the first failure ends.
+// until the window that started with the first failure ends. Attempts that
+// have begun but not ended count as failures, so that concurrent attempts
+// cannot exceed the limit either.
 type Limiter struct {
 	max    int
 	window time.Duration
@@ -31,7 +34,8 @@ type Limiter struct {
 
 type entry struct {
 	failures int
-	start    time.Time
+	start    time.Time // of the window, set by its first failure
+	pending  int       // attempts begun but not ended
 }
 
 // NewLimiter returns a Limiter that allows max failures per window.
@@ -39,27 +43,45 @@ func NewLimiter(max int, window time.Duration) *Limiter {
 	return &Limiter{max: max, window: window, now: time.Now, entries: map[string]*entry{}}
 }
 
-// Allowed reports whether none of the keys is currently blocked.
-func (l *Limiter) Allowed(keys ...string) bool {
+// current returns the failures of e in the window that is open at now.
+func (l *Limiter) current(e *entry, now time.Time) int {
+	if now.Sub(e.start) >= l.window {
+		return 0
+	}
+	return e.failures
+}
+
+// Begin starts an attempt for each key. It returns false, starting none, if
+// any key is blocked. Each successful Begin must be followed by End.
+func (l *Limiter) Begin(keys ...string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	for _, k := range keys {
-		if e := l.entries[k]; e != nil && now.Sub(e.start) < l.window && e.failures >= l.max {
+		if e := l.entries[k]; e != nil && l.current(e, now)+e.pending >= l.max {
 			return false
 		}
+	}
+	for _, k := range keys {
+		e := l.entries[k]
+		if e == nil {
+			e = &entry{}
+			l.entries[k] = e
+		}
+		e.pending++
 	}
 	return true
 }
 
-// Failure records a failed attempt for each key.
-func (l *Limiter) Failure(keys ...string) {
+// End finishes attempts started with Begin, recording a failure for each key
+// if failed is set.
+func (l *Limiter) End(failed bool, keys ...string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	if now.Sub(l.sweep) > l.window {
 		for k, e := range l.entries {
-			if now.Sub(e.start) >= l.window {
+			if e.pending == 0 && l.current(e, now) == 0 {
 				delete(l.entries, k)
 			}
 		}
@@ -67,11 +89,19 @@ func (l *Limiter) Failure(keys ...string) {
 	}
 	for _, k := range keys {
 		e := l.entries[k]
-		if e == nil || now.Sub(e.start) >= l.window {
-			e = &entry{start: now}
-			l.entries[k] = e
+		if e == nil {
+			continue
 		}
-		e.failures++
+		e.pending--
+		if failed {
+			if l.current(e, now) == 0 {
+				e.failures, e.start = 0, now
+			}
+			e.failures++
+		}
+		if e.pending == 0 && l.current(e, now) == 0 {
+			delete(l.entries, k)
+		}
 	}
 }
 
@@ -80,7 +110,12 @@ func (l *Limiter) Reset(keys ...string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, k := range keys {
-		delete(l.entries, k)
+		if e := l.entries[k]; e != nil {
+			e.failures = 0
+			if e.pending == 0 {
+				delete(l.entries, k)
+			}
+		}
 	}
 }
 
@@ -91,6 +126,9 @@ type Authenticator struct {
 	st      *store.Store
 	byIP    *Limiter
 	byLogin *Limiter
+	// checks limits concurrent password checks, which are CPU-bound by
+	// design, so that bursts of logins queue instead of starving the server.
+	checks chan struct{}
 }
 
 // New returns an Authenticator allowing 10 failures per client network and
@@ -100,6 +138,7 @@ func New(st *store.Store) *Authenticator {
 		st:      st,
 		byIP:    NewLimiter(10, 15*time.Minute),
 		byLogin: NewLimiter(20, 15*time.Minute),
+		checks:  make(chan struct{}, runtime.GOMAXPROCS(0)),
 	}
 }
 
@@ -127,14 +166,24 @@ func ClientKey(remote string) string {
 // ErrThrottled on failure.
 func (a *Authenticator) Login(ctx context.Context, remote, username, password string) (*store.User, error) {
 	ipKey := ClientKey(remote)
-	login := strings.ToLower(strings.TrimSpace(username))
-	if !a.byIP.Allowed(ipKey) || !a.byLogin.Allowed(login) {
+	// The account limit is keyed on the address the store looks up, so that
+	// every spelling of a username that reaches an account shares it.
+	login := email.NormalizeAddress(username)
+	if !a.byIP.Begin(ipKey) {
 		return nil, ErrThrottled
 	}
-	u, err := a.st.Authenticate(ctx, login, password)
+	if !a.byLogin.Begin(login) {
+		a.byIP.End(false, ipKey)
+		return nil, ErrThrottled
+	}
+	failed := false
+	defer func() {
+		a.byIP.End(failed, ipKey)
+		a.byLogin.End(failed, login)
+	}()
+	u, err := a.check(ctx, login, password)
 	if errors.Is(err, store.ErrInvalidCredentials) {
-		a.byIP.Failure(ipKey)
-		a.byLogin.Failure(login)
+		failed = true
 		return nil, err
 	}
 	if err != nil {
@@ -142,4 +191,15 @@ func (a *Authenticator) Login(ctx context.Context, remote, username, password st
 	}
 	a.byLogin.Reset(login)
 	return u, nil
+}
+
+// check verifies a password, waiting while too many checks are running.
+func (a *Authenticator) check(ctx context.Context, login, password string) (*store.User, error) {
+	select {
+	case a.checks <- struct{}{}:
+		defer func() { <-a.checks }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return a.st.Authenticate(ctx, login, password)
 }

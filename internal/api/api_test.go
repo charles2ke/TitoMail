@@ -619,20 +619,31 @@ iVBORw0KGgo=
 		t.Fatalf("deleting the inbox: %d", code)
 	}
 	// Deleting a folder (and its sub-folders) moves their messages to Trash.
-	var sub store.Mailbox
+	// Folder names are case-sensitive, so "work/Other" is not part of "Work".
+	var sub, other store.Mailbox
 	c.must("POST", "/api/mailboxes", map[string]string{"name": "Work/2024"}, &sub)
+	c.must("POST", "/api/mailboxes", map[string]string{"name": "work/Other"}, &other)
 	kept := deliver(t, e, u, "From: a@remote.test\nTo: alice@example.test\nSubject: Keep me\n\nbody\n")
 	c.must("POST", "/api/messages/actions", map[string]any{"ids": []int64{kept.ID}, "action": "move", "mailbox_id": sub.ID}, nil)
+	stays := deliver(t, e, u, "From: a@remote.test\nTo: alice@example.test\nSubject: Stay\n\nbody\n")
+	c.must("POST", "/api/messages/actions", map[string]any{"ids": []int64{stays.ID}, "action": "move", "mailbox_id": other.ID}, nil)
 	c.must("DELETE", fmt.Sprintf("/api/mailboxes/%d", mb.ID), nil, nil)
 	if trash := c.mailbox(store.SpecialTrash); trash.Total != 1 {
 		t.Fatalf("trash after deleting a folder: %+v", trash)
 	}
 	var left []store.Mailbox
 	c.must("GET", "/api/mailboxes", nil, &left)
+	otherLeft := false
 	for _, x := range left {
 		if x.ID == sub.ID || x.ID == mb.ID {
 			t.Fatalf("folder still exists: %+v", x)
 		}
+		if x.ID == other.ID && x.Total == 1 {
+			otherLeft = true
+		}
+	}
+	if !otherLeft {
+		t.Fatalf("work/Other was changed by deleting Work: %+v", left)
 	}
 }
 

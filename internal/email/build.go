@@ -9,6 +9,7 @@ import (
 	netmail "net/mail"
 	"strings"
 	"time"
+	"unicode"
 
 	gomail "github.com/emersion/go-message/mail"
 )
@@ -273,9 +274,11 @@ func ValidAddress(addr string) bool {
 	return strings.Contains(domain, ".") || domain == "localhost"
 }
 
-// NormalizeAddress lower-cases the domain part of an address and trims it.
+// NormalizeAddress lower-cases an address and trims spaces and angle
+// brackets around it. It is idempotent, so a normalized address can be
+// normalized again without changing.
 func NormalizeAddress(addr string) string {
-	addr = strings.TrimSpace(strings.Trim(strings.TrimSpace(addr), "<>"))
+	addr = strings.TrimFunc(addr, func(r rune) bool { return r == '<' || r == '>' || unicode.IsSpace(r) })
 	at := strings.LastIndexByte(addr, '@')
 	if at < 0 {
 		return strings.ToLower(addr)

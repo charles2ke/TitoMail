@@ -11,6 +11,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -567,16 +568,27 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	})
 }
 
-// dummyHash is compared against when a user does not exist, so that
-// authentication takes the same time either way.
-var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("titomail-timing-equalizer"), bcrypt.MinCost)
+var (
+	dummyOnce sync.Once
+	dummyHash []byte
+)
+
+// dummyPasswordHash is compared against when a user does not exist, so that
+// authentication takes the same time either way. It uses PasswordCost, as
+// the time a check takes doubles with every step of the cost.
+func dummyPasswordHash() []byte {
+	dummyOnce.Do(func() {
+		dummyHash, _ = bcrypt.GenerateFromPassword([]byte("titomail-timing-equalizer"), PasswordCost)
+	})
+	return dummyHash
+}
 
 // Authenticate verifies credentials. Disabled users cannot log in.
 func (s *Store) Authenticate(ctx context.Context, addr, password string) (*User, error) {
 	u, err := s.UserByEmail(ctx, addr)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+			_ = bcrypt.CompareHashAndPassword(dummyPasswordHash(), []byte(password))
 			return nil, ErrInvalidCredentials
 		}
 		return nil, err
