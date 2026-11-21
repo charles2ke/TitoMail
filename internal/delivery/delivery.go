@@ -155,9 +155,6 @@ func (d *Deliverer) DeliverLocal(ctx context.Context, u *store.User, in *Inbound
 	if p == nil {
 		p = email.Parse(in.Raw)
 	}
-	if err := d.st.CheckQuota(ctx, u, int64(len(in.Raw))); err != nil {
-		return nil, err
-	}
 	from := p.PrimaryFrom().Address
 	pref := ""
 	if from != "" {
@@ -226,7 +223,7 @@ func (d *Deliverer) DeliverLocal(ctx context.Context, u *store.User, in *Inbound
 			return nil, err
 		}
 	}
-	m, err := d.st.InsertMessage(ctx, store.NewMessage{
+	m, err := d.st.InsertMessageWithQuota(ctx, store.NewMessage{
 		UserID: u.ID, MailboxID: mb.ID, Raw: in.Raw, Parsed: p, Flags: flags, LabelIDs: labels,
 	})
 	if err != nil {

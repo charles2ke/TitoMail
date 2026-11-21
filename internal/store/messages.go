@@ -340,10 +340,25 @@ func prepare(nm *NewMessage) *preparedMessage {
 
 // InsertMessage stores a new message in a mailbox.
 func (s *Store) InsertMessage(ctx context.Context, nm NewMessage) (*Message, error) {
+	return s.insertMessage(ctx, nm, false)
+}
+
+// InsertMessageWithQuota stores a new message if it fits within the user's
+// current storage quota.
+func (s *Store) InsertMessageWithQuota(ctx context.Context, nm NewMessage) (*Message, error) {
+	return s.insertMessage(ctx, nm, true)
+}
+
+func (s *Store) insertMessage(ctx context.Context, nm NewMessage, checkQuota bool) (*Message, error) {
 	pm := prepare(&nm)
 	var m *Message
 	err := s.write(ctx, func(tx *sql.Tx, emit emitFunc) error {
 		var err error
+		if checkQuota {
+			if err := checkQuotaTx(ctx, tx, nm.UserID, int64(len(nm.Raw))); err != nil {
+				return err
+			}
+		}
 		m, err = insertMessageTx(ctx, tx, pm)
 		if err != nil {
 			return err
@@ -352,6 +367,23 @@ func (s *Store) InsertMessage(ctx context.Context, nm NewMessage) (*Message, err
 		return nil
 	})
 	return m, err
+}
+
+func checkQuotaTx(ctx context.Context, tx *sql.Tx, userID, n int64) error {
+	var quota, used int64
+	err := tx.QueryRowContext(ctx, `SELECT quota_bytes,
+		(SELECT COALESCE(SUM(size), 0) FROM messages WHERE user_id = users.id)
+		FROM users WHERE id = ?`, userID).Scan(&quota, &used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if quota > 0 && used+n > quota {
+		return ErrQuotaExceeded
+	}
+	return nil
 }
 
 // ReplaceMessage atomically deletes oldID and stores a new message (used

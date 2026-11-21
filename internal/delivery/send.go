@@ -73,14 +73,11 @@ func (d *Deliverer) Send(ctx context.Context, req SendRequest) (*SendResult, err
 	if err != nil {
 		return nil, err
 	}
-	if err := d.st.CheckQuota(ctx, u, int64(len(sentRaw))); err != nil {
-		return nil, err
-	}
 	sentBox, err := d.st.MailboxBySpecial(ctx, u.ID, store.SpecialSent)
 	if err != nil {
 		return nil, err
 	}
-	sent, err := d.st.InsertMessage(ctx, store.NewMessage{UserID: u.ID, MailboxID: sentBox.ID, Raw: sentRaw, Flags: []string{store.FlagSeen}})
+	sent, err := d.st.InsertMessageWithQuota(ctx, store.NewMessage{UserID: u.ID, MailboxID: sentBox.ID, Raw: sentRaw, Flags: []string{store.FlagSeen}})
 	if err != nil {
 		return nil, err
 	}

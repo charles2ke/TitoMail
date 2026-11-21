@@ -436,3 +436,34 @@ func TestUndoSend(t *testing.T) {
 		t.Error("cancelled an already delivered message")
 	}
 }
+
+func TestSendChecksCurrentQuota(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	alice := newUser(t, st, "alice@example.test")
+	quota := int64(1)
+	if err := st.UpdateUser(ctx, alice.ID, store.UserUpdate{QuotaBytes: &quota}); err != nil {
+		t.Fatal(err)
+	}
+	d := New(st, Options{})
+	if _, err := d.Send(ctx, SendRequest{User: alice, Message: &email.Outgoing{
+		From: alice.Address(), To: []email.Address{{Address: "bob@example.test"}}, Subject: "over quota", Text: "body",
+	}}); !errors.Is(err, store.ErrQuotaExceeded) {
+		t.Fatalf("Send() error = %v, want ErrQuotaExceeded", err)
+	}
+	sent, err := st.MailboxBySpecial(ctx, alice.ID, store.SpecialSent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, err := st.AllMessagesInMailbox(ctx, sent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := st.ListQueue(ctx, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 || len(queue) != 0 {
+		t.Errorf("over-quota send left %d sent messages and %d queue entries", len(messages), len(queue))
+	}
+}

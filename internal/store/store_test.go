@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -91,6 +92,47 @@ func TestUsersAndAuth(t *testing.T) {
 	}
 	if pk, err := d.DKIMPublicKey(); err != nil || len(pk) < 300 {
 		t.Errorf("dkim public key = %q, %v", pk, err)
+	}
+}
+
+func TestInsertMessageWithQuotaConcurrent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u := newTestUser(t, s, "alice@example.com")
+	inbox := mustMailbox(t, s, u.ID, SpecialInbox)
+	raw := rawMsg("sender@other.org", u.Email, "Quota", "quota@example.org", "", "body")
+	quota := int64(len(raw))
+	if err := s.UpdateUser(ctx, u.ID, UserUpdate{QuotaBytes: &quota}); err != nil {
+		t.Fatal(err)
+	}
+
+	const attempts = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, attempts)
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := s.InsertMessageWithQuota(ctx, NewMessage{UserID: u.ID, MailboxID: inbox.ID, Raw: raw})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	var inserted, rejected int
+	for err := range errs {
+		switch {
+		case err == nil:
+			inserted++
+		case errors.Is(err, ErrQuotaExceeded):
+			rejected++
+		default:
+			t.Errorf("InsertMessageWithQuota() error = %v", err)
+		}
+	}
+	if inserted != 1 || rejected != attempts-1 {
+		t.Errorf("inserted %d messages and rejected %d; want 1 and %d", inserted, rejected, attempts-1)
 	}
 }
 
