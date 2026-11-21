@@ -185,9 +185,10 @@ func sanitizeCSS(css string, opts SanitizeOptions) (string, bool) {
 		}
 		return `url("` + strings.ReplaceAll(u, `"`, `%22`) + `")`
 	})
-	// The result is written into a <style> element, which ends at the first
-	// "</style". CSS never needs a raw "<", so escape every one.
-	return strings.ReplaceAll(css, "<", `\3c `), blocked
+	// The result is written into a <style> element, whose text can only end
+	// at "</", so escape every "</". A lone "<" stays, as media queries use
+	// it ("width < 600px").
+	return strings.ReplaceAll(css, "</", `\3c /`), blocked
 }
 
 // rewriteURL decides what to do with a resource URL. It returns the URL to

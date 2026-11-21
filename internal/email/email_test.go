@@ -129,6 +129,10 @@ func TestRenderHTMLKeepsStylesContained(t *testing.T) {
 			t.Errorf("style %q escaped sanitizing:\n%s", css, doc)
 		}
 	}
+	doc := RenderHTML(`<style>@media (width < 600px){p{color:red}}</style><p>Hello</p>`, SanitizeOptions{}).Document
+	if !strings.Contains(doc, "@media (width < 600px)") {
+		t.Errorf("media query was changed:\n%s", doc)
+	}
 }
 
 func TestQuoteDetection(t *testing.T) {
