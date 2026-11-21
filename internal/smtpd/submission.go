@@ -131,8 +131,10 @@ func (ss *subSession) Data(r io.Reader) error {
 		p.MessageID = email.NewMessageID(email.DomainOf(p.From[0].Address))
 		prepend = append(prepend, "Message-ID: <"+p.MessageID+">")
 	}
-	// Bcc recipients must not see each other or be revealed to the others.
-	final := rewriteHeader(raw, prepend, func(f headerField) bool { return strings.EqualFold(f.name, "Bcc") })
+	// Remove Bcc recipients and client-supplied authentication metadata.
+	final := rewriteHeader(raw, prepend, func(f headerField) bool {
+		return strings.EqualFold(f.name, "Bcc") || strings.EqualFold(f.name, "Authentication-Results")
+	})
 	id, err := s.d.Submit(ctx, ss.user, ss.from, ss.rcpts, final, p)
 	if err != nil {
 		s.log.Error("queueing submitted message failed", "user", ss.user.Email, "err", err)
