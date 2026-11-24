@@ -1,7 +1,6 @@
 # TitoMail
 
-TitoMail is a self-hosted email server with a Gmail/Outlook-style webmail
-client. It is a single Go binary that receives and sends mail over SMTP,
+TitoMail is a self-hosted email server with a webmail client. It is a single Go binary that receives and sends mail over SMTP,
 serves IMAP to desktop and phone mail apps, and embeds a React web interface.
 Everything is stored in one SQLite database.
 
